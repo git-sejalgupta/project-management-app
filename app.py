@@ -129,6 +129,68 @@ def get_project_by_code(code):
 
     return jsonify(project_dict)
 
+# Filter projects and serves paginated results
+@app.route("/projects", methods=["GET"])
+def get_projects():
+    db = get_db()
+    cursor = db.cursor()
+
+    # Get filters from request
+    code = request.args.get("code")
+    archived = request.args.get("archived")
+    start_date = request.args.get("start_date")
+    end_date = request.args.get("end_date")
+
+    # Pagination with default   
+    try:
+        page = int(request.args.get("page", 1))
+        size = int(request.args.get("size", 10))
+        if page < 1 or size < 1:
+            raise ValueError
+    except ValueError:
+        return jsonify({"error": "Invalid page or size parameter. Must be positive integers."}), 400
+
+    offset = (page - 1) * size
+    # Base query
+    base_query = " FROM projects WHERE 1=1"
+    params = []
+
+    # filters
+    if code:
+        base_query += " AND code LIKE ?"
+        params.append(f"%{code}%")
+    
+    if archived is not None:
+        base_query += " AND archived = ?"
+        params.append(int(archived))
+
+    if start_date:
+        base_query += " AND start_date >= ?"
+        params.append(start_date)
+
+    if end_date:
+        base_query += " AND end_date <= ?"
+        params.append(end_date)
+
+    # Query to get paginated results
+    query = "SELECT *" + base_query + " LIMIT ? OFFSET ?"
+    params.extend([size, offset])
+
+    cursor.execute(query, params)
+    projects = [dict(zip([column[0] for column in cursor.description], row)) for row in cursor.fetchall()]
+    
+    # Query to get total count
+    count_query = "SELECT COUNT(*)" + base_query
+    cursor.execute(count_query, params[:-2])  # removing LIMIT/OFFSET
+    total_count = cursor.fetchone()[0]
+
+    return jsonify({
+        "projects": projects,
+        "total": total_count,
+        "page": page,
+        "size": len(projects)
+    })
+
 @app.route("/projects/<code>", methods=["PUT"])
 def update_project(code):
     data = request.get_json()

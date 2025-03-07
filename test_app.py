@@ -143,3 +143,111 @@ def test_delete_software_not_found(client):
     response = client.delete("/software/Python/3.9")
     assert response.status_code == 404
     assert b"Software not found" in response.data
+
+# --------------- Test Cases for Project Filter API ----------------
+def test_fetch_all_projects(client):
+    """fetching all projects with default pagination."""
+    client.post("/projects", json={"code": "mycode"})
+    response = client.get("/projects")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "projects" in data
+    assert isinstance(data["projects"], list)
+
+def test_fetch_projects_with_pagination(client):
+    """fetching projects with custom pagination."""
+    client.post("/projects", json={"code": "mycode"})
+    client.post("/projects", json={"code": "mycode1"})
+    client.post("/projects", json={"code": "mycode2"})
+    response = client.get("/projects?page=2&size=2")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert "projects" in data
+    assert data["page"] == 2
+    assert data["size"] <= 5
+
+def test_fetch_projects_filtered_by_code(client):
+    """fetching projects by partial code match."""
+    client.post("/projects", json={"code": "mycode"})
+    client.post("/projects", json={"code": "myproject"})
+    response = client.get("/projects?code=proj")
+    assert response.status_code == 200
+    data = response.get_json()
+    for project in data["projects"]:
+        assert "proj" in project["code"]
+
+def test_fetch_archived_projects(client):
+    """fetching only archived projects."""
+    client.post("/projects", json={"code": "mycode","archived": 1})
+    client.post("/projects", json={"code": "mycode1","archived": 1})
+    client.post("/projects", json={"code": "mycode2","archived": 0})
+    response = client.get("/projects?archived=1")
+    assert response.status_code == 200
+    data = response.get_json()
+    for project in data["projects"]:
+        assert project["archived"] == 1
+
+def test_fetch_projects_by_start_date(client):
+    """fetching projects starting on or after a given date."""
+    client.post("/projects", json={"code": "mycode","start_date": "2024-01-01"})
+    client.post("/projects", json={"code": "mycode","start_date": "2025-02-01"})
+    response = client.get("/projects?start_date=2025-01-01")
+    assert response.status_code == 200
+    data = response.get_json()
+    for project in data["projects"]:
+        assert project["start_date"] >= "2025-01-01"
+
+def test_fetch_projects_by_end_date(client):
+    """fetching projects ending on or before a given date."""
+    client.post("/projects", json={"code": "mycode","end_date": "2026-01-01"})
+    client.post("/projects", json={"code": "mycode","end_date": "2025-02-01"})
+    response = client.get("/projects?end_date=2025-12-31")
+    assert response.status_code == 200
+    data = response.get_json()
+    for project in data["projects"]:
+        assert project["end_date"] is None or project["end_date"] <= "2025-12-31"
+
+def test_fetch_projects_with_invalid_page(client):
+    """handling invalid page values."""
+    response = client.get("/projects?page=-1&size=abc")
+    assert response.status_code == 400
+    data = response.get_json()
+    assert "error" in data
+    assert data["error"] == "Invalid page or size parameter. Must be positive integers."
+
+def test_fetch_projects_with_special_chars(client):
+    """projects retrieval with special characters in the code."""
+    client.post("/projects", json={"code": "mycode","start_date": "2024-01-01"})
+    client.post("/projects", json={"code": "my%$@!code","start_date": "2025-02-01"})
+    response = client.get("/projects?code=%$@!")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert isinstance(data["projects"], list)
+
+def test_fetch_empty_database(client):
+    """fetching projects when database is empty."""
+    response = client.get("/projects")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert data["total"] == 0
+    assert data["projects"] == []
+
+def test_fetch_large_pagination(client):
+    """large pagination requests."""
+    client.post("/projects", json={"code": "mycode","start_date": "2024-01-01"})
+    client.post("/projects", json={"code": "mycode2","start_date": "2025-02-01"})    
+    response = client.get("/projects?size=1000")
+    assert response.status_code == 200
+    data = response.get_json()
+    assert len(data["projects"]) <= 1000
+
+def test_fetch_projects_with_all_filters(client):
+    """applying multiple filters together."""
+    response = client.get("/projects?code=test&archived=0&start_date=2025-01-01&end_date=2025-12-31&page=1&size=3")
+    assert response.status_code == 200
+    data = response.get_json()
+    for project in data["projects"]:
+        assert "test" in project["code"]
+        assert project["archived"] == 0
+        assert project["start_date"] >= "2025-01-01"
+        assert project["end_date"] is None or project["end_date"] <= "2025-12-31"
