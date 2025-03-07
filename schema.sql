@@ -16,3 +16,12 @@ CREATE TABLE IF NOT EXISTS software (
 	PRIMARY KEY("id" AUTOINCREMENT),
 	UNIQUE("name","version")
 );
+
+CREATE TABLE IF NOT EXISTS project_software (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    project_id INTEGER NOT NULL,
+    software_id INTEGER NOT NULL,
+    UNIQUE (project_id, software_id),
+    FOREIGN KEY (project_id) REFERENCES projects(id),
+    FOREIGN KEY (software_id) REFERENCES software(id)
+);

@@ -18,6 +18,7 @@ def client():
         with app.app_context():
             db = get_db()
             cursor = db.cursor()
+            cursor.execute("DELETE FROM project_software")  
             cursor.execute("DELETE FROM projects")  
             cursor.execute("DELETE FROM software")  
             db.commit()
@@ -84,6 +85,27 @@ def test_delete_project_not_found(client):
     assert response.status_code == 404
     assert b"Project not found" in response.data
 
+def test_delete_project_with_association(client):
+    """Deletion of project with associated software."""
+
+    client.post("/projects", json={"code": "project1", "archived": 0, "start_date": "2025-01-01", "end_date": "2025-12-31"})
+    client.post("/software", json={"name": "software1", "version": "1.0.0", "vendor": "MyCompany", "deprecated": 0})
+
+    data = {
+        "code": "project1",
+        "software_name": "software1",
+        "version": "1.0.0"
+    }
+
+    # Associate software with project
+    client.post("/projects/software", json=data)
+
+    # Delete the project
+    response = client.delete("/projects/project1")
+    assert response.status_code == 400
+    assert response.json == {"error": "Cannot delete project. It is associated with software."}
+
+
 # --------------- Test Cases for Software APIs ----------------
 
 def test_create_software(client):
@@ -143,6 +165,27 @@ def test_delete_software_not_found(client):
     response = client.delete("/software/Python/3.9")
     assert response.status_code == 404
     assert b"Software not found" in response.data
+
+def test_delete_software_with_association(client):
+    """Deletion of software with associated project."""
+
+    client.post("/projects", json={"code": "project1", "archived": 0, "start_date": "2025-01-01", "end_date": "2025-12-31"})
+    client.post("/software", json={"name": "software1", "version": "1.0.0", "vendor": "MyCompany", "deprecated": 0})
+
+    data = {
+        "code": "project1",
+        "software_name": "software1",
+        "version": "1.0.0"
+    }
+
+    # Associate software with project
+    client.post("/projects/software", json=data)
+
+    # Delete the software
+    response = client.delete("/software/software1/1.0.0")
+    assert response.status_code == 400
+    assert response.json == {"error": "Cannot delete software. It is associated with a project."}
+
 
 # --------------- Test Cases for Project Filter API ----------------
 def test_fetch_all_projects(client):
@@ -251,3 +294,134 @@ def test_fetch_projects_with_all_filters(client):
         assert project["archived"] == 0
         assert project["start_date"] >= "2025-01-01"
         assert project["end_date"] is None or project["end_date"] <= "2025-12-31"
+
+# ----------------- Test Cases for associate_software_with_project API -----------------
+def test_associate_software_with_project_success(client):
+    """Associating a valid software with a project."""
+    # First, create a project and software
+    client.post("/projects", json={"code": "project1", "archived": 0, "start_date": "2025-01-01", "end_date": "2025-12-31"})
+    client.post("/software", json={"name": "software1", "version": "1.0.0", "vendor": "MyCompany", "deprecated": 0})
+    
+    data = {
+        "code": "project1",
+        "software_name": "software1",
+        "version": "1.0.0"
+    }
+    response = client.post("/projects/software", json=data)
+    assert response.status_code == 201
+    assert b"Software successfully associated with project" in response.data
+
+def test_missing_code(client):
+    """Missing 'code' field in request."""
+    data = {
+        "software_name": "software1",
+        "version": "1.0.0"
+    }
+    response = client.post("/projects/software", json=data)
+    assert response.status_code == 400
+    assert response.json == {"error": "code is required"}
+
+def test_missing_software_name(client):
+    """Missing 'software_name' field in request."""
+    data = {
+        "code": "project1",
+        "version": "1.0.0"
+    }
+    response = client.post("/projects/software", json=data)
+    assert response.status_code == 400
+    assert response.json == {"error": "software_name is required"}
+
+def test_missing_version(client):
+    """Missing 'version' field in request."""
+    data = {
+        "code": "project1",
+        "software_name": "software1"
+    }
+    response = client.post("/projects/software", json=data)
+    assert response.status_code == 400
+    assert response.json == {"error": "version is required"}
+
+def test_project_not_found(client):
+    """Project is not found."""
+    data = {
+        "code": "project1",
+        "software_name": "software1",
+        "version": "1.0.0"
+    }
+    response = client.post("/projects/software", json=data)
+    assert response.status_code == 404
+    assert response.json == {"error": "Project not found"}
+
+def test_software_not_found(client):
+    """Software is not found."""
+    client.post("/projects", json={"code": "project1", "archived": 0, "start_date": "2025-01-01", "end_date": "2025-12-31"})
+    
+    data = {
+        "code": "project1",
+        "software_name": "software1",
+        "version": "1.0.0"
+    }
+    response = client.post("/projects/software", json=data)
+    assert response.status_code == 404
+    assert response.json == {"error": "Software not found"}
+
+def test_deprecated_software(client):
+    """Software is deprecated."""
+    client.post("/projects", json={"code": "project1", "archived": 0, "start_date": "2025-01-01", "end_date": "2025-12-31"})
+    client.post("/software", json={"name": "software1", "version": "1.0.0", "vendor": "MyCompany", "deprecated": 1})
+    
+    data = {
+        "code": "project1",
+        "software_name": "software1",
+        "version": "1.0.0"
+    }
+    response = client.post("/projects/software", json=data)
+    assert response.status_code == 400
+    assert response.json == {"error": "Cannot associate a deprecated software version"}
+
+def test_associate_with_different_major_version(client):
+    """Project already has a different major version of the same software."""
+    client.post("/projects", json={"code": "project1", "archived": 0, "start_date": "2025-01-01", "end_date": "2025-12-31"})
+    client.post("/software", json={"name": "software1", "version": "2.0.0", "vendor": "MyCompany", "deprecated": 0})
+    client.post("/software", json={"name": "software1", "version": "1.0.0", "vendor": "MyCompany", "deprecated": 0})
+
+    # Associate software version 2.0.0
+    data = {
+        "code": "project1",
+        "software_name": "software1",
+        "version": "2.0.0"
+    }
+    client.post("/projects/software", json=data)
+
+    # Now, try to associate with a different major version (1.x.x)
+    data = {
+        "code": "project1",
+        "software_name": "software1",
+        "version": "1.0.0"
+    }
+    response = client.post("/projects/software", json=data)
+    assert response.status_code == 400
+    assert response.json == {"error": "Project already uses a different major version: 2.0.0"}
+
+def test_associate_software_with_project_duplicate_entry(client):
+    """A project already has the same software version associated."""
+
+    client.post("/projects", json={"code": "project1", "archived": 0, "start_date": "2025-01-01", "end_date": "2025-12-31"})
+    client.post("/software", json={"name": "software1", "version": "1.0.0", "vendor": "MyCompany", "deprecated": 0})
+
+    data = {
+        "code": "project1",
+        "software_name": "software1",
+        "version": "1.0.0"
+    }
+    
+    # First attempt to associate software
+    response = client.post("/projects/software", json=data)
+    assert response.status_code == 201
+    assert b"Software successfully associated with project" in response.data
+    
+    # Now, try to associate the same software again, which should cause a duplicate error
+    response = client.post("/projects/software", json=data)
+    assert response.status_code == 400
+    assert response.json == {"error": "Software version already associated with the project"}
+
