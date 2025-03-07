@@ -244,6 +244,14 @@ def delete_project(code):
     cursor = db.cursor()
 
     try:
+        # Check if the project is associated with any software
+        cursor.execute("SELECT 1 FROM project_software WHERE project_id = (SELECT id FROM projects WHERE code = ?)", (code,))
+        association = cursor.fetchone()
+
+        if association:
+            logger.warning(f"Cannot delete project {code}: It has associated software.")
+            return jsonify({"error": "Cannot delete project. It is associated with software."}), 400
+                
         cursor.execute("DELETE FROM projects WHERE code = ?", (code,))
         db.commit()
 
@@ -360,6 +368,17 @@ def delete_software(name, version):
     cursor = db.cursor()
 
     try:
+        # Check if the software is associated with any project
+        cursor.execute("""
+            SELECT 1 FROM project_software 
+            WHERE software_id = (SELECT id FROM software WHERE name = ? AND version = ?)
+        """, (name, version))
+        association = cursor.fetchone()
+
+        if association:
+            logger.warning(f"Cannot delete software {name} v{version}: It is associated with a project.")
+            return jsonify({"error": "Cannot delete software. It is associated with a project."}), 400
+
         cursor.execute("DELETE FROM software WHERE name = ? AND version = ?", (name, version))
         db.commit()
 
@@ -373,6 +392,104 @@ def delete_software(name, version):
     except sqlite3.Error as e:
         logger.error(f"Database error during Software deletion: {e}")
         return jsonify({"error": "Internal Server Error"}), 500
+
+# An endpoint that associates a software version with a project
+@app.route('/projects/software', methods=['POST'])
+def associate_software_with_project():
+    data = request.get_json()
+    code = data.get('code')
+    software_name = data.get('software_name')
+    version = data.get('version')
+
+    if not code:
+        logging.warning(f"Missing required fields: code")
+        return jsonify({'error': 'code is required'}), 400
+
+    if not software_name:
+        logging.warning(f"Missing required fields: software_name")
+        return jsonify({'error': 'software_name is required'}), 400
+    
+    if not version:
+        logging.warning(f"Missing required fields: version")
+        return jsonify({'error': 'version is required'}), 400
+
+    # Extract major version
+    major_version = version.split('.')[0]
+
+    db = get_db()
+    cursor = db.cursor()
+
+    try:
+        # Fetch project ID from project name
+        cursor.execute("SELECT id FROM projects WHERE code = ?", (code,))
+        project = cursor.fetchone()
+
+        if not project:
+            logging.warning(f"Project {code} not found")
+            return jsonify({'error': 'Project not found'}), 404
+
+        project_id = project['id']
+
+        # Fetch software info
+        cursor.execute("SELECT id, deprecated FROM software WHERE name = ? AND version = ?", (software_name, version))
+        software = cursor.fetchone()
+
+        if not software:
+            logging.warning(f"Software {software_name} version {version} not found")
+            return jsonify({'error': 'Software not found'}), 404
+
+        if software['deprecated']:
+            logging.warning(f"Attempt to associate deprecated software {software_name} version {version}")
+            return jsonify({'error': 'Cannot associate a deprecated software version'}), 400
+
+        # Check if the project already has the same software version associated
+        cursor.execute("""
+            SELECT 1 
+            FROM project_software 
+            WHERE project_id = ? AND software_id = ?
+        """, (project_id, software['id']))
+
+        if cursor.fetchone():
+            logging.warning(f"Project {project_id} already has {software_name} version {version} associated")
+            return jsonify({'error': 'Software version already associated with the project'}), 400
+
+        # Check if project already has a different major version of the software
+        cursor.execute("""
+            SELECT s.version 
+            FROM software s
+            JOIN project_software ps 
+            ON s.id = ps.software_id
+            WHERE s.deprecated = 0 AND ps.project_id = ? AND s.name = ?
+        """, (project_id, software_name))
+
+        existing_versions = cursor.fetchall()
+
+        for row in existing_versions:
+            existing_major_version = row['version'].split('.')[0]
+
+            if existing_major_version != major_version:
+                logging.warning(f"Project {project_id} already uses a different major version: {row['version']}")
+                return jsonify({'error': f'Project already uses a different major version: {row["version"]}'}), 400
+
+        # Associate software with project
+        cursor.execute("INSERT INTO project_software (project_id, software_id) VALUES (?, ?)", (project_id, software['id']))
+        db.commit()
+
+        logging.info(f"Software {software_name} version {version} associated with project {project_id}")
+        return jsonify({'message': 'Software successfully associated with project'}), 201
+
+    except sqlite3.IntegrityError:
+        logger.warning(f"Project creation failed: Code {data['code']} with software {data['software_name']} and version {data['version']} already exists")
+        return jsonify({"error": f"Project with code and version already exists"}), 400
+
+    except sqlite3.Error as e:
+        logging.error(f"Database error: {e}")
+        return jsonify({'error': 'Database error occurred'}), 500
+
+    except Exception as e:
+        logging.error(f"Unexpected error: {e}")
+        return jsonify({'error': 'An unexpected error occurred'}), 500
+
 
 if __name__ == "__main__":
     init_db()
