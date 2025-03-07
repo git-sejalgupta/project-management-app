@@ -1,0 +1,18 @@
+CREATE TABLE IF NOT EXISTS projects (
+	"id"	INTEGER NOT NULL UNIQUE,
+	"code"	TEXT NOT NULL UNIQUE,
+	"archived"	INTEGER NOT NULL DEFAULT 0,
+	"start_date"	TEXT,
+	"end_date"	TEXT,
+	PRIMARY KEY("id" AUTOINCREMENT)
+) STRICT;
+
+CREATE TABLE IF NOT EXISTS software (
+	"id"	INTEGER NOT NULL UNIQUE,
+	"name"	TEXT NOT NULL,
+	"version"	TEXT NOT NULL,
+	"vendor"	TEXT,
+	"deprecated"	INTEGER NOT NULL DEFAULT 0,
+	PRIMARY KEY("id" AUTOINCREMENT),
+	UNIQUE("name","version")
+);
